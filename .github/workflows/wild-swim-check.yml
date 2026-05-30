@@ -25,5 +25,5 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-        run: python3 wild_swim_checker.py --swim saturday --check morning
+        run: python3 wild_swim_checker.py --run-due
 

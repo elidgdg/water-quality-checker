@@ -271,7 +271,7 @@ def due_runs(now: Optional[datetime] = None) -> List[SwimRun]:
         for check_type, (weekday, check_time) in config["checks"].items():
             hour, minute = (int(part) for part in check_time.split(":"))
             scheduled_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            in_check_window = scheduled_at <= now < scheduled_at + timedelta(minutes=30)
+            in_check_window = scheduled_at - timedelta(minutes=15) <= now < scheduled_at + timedelta(minutes=15)
             if now.weekday() == weekday and in_check_window:
                 runs.append(make_swim_run(swim_key, check_type, now))
     return runs

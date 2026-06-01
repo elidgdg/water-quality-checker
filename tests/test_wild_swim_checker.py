@@ -139,15 +139,15 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(runs[0].swim_key, "monday")
         self.assertEqual(runs[0].check_type, "evening")
 
-    def test_due_runs_allow_schedule_delay_within_thirty_minute_slot(self):
-        delayed_sunday_evening = datetime(2026, 5, 31, 19, 29, tzinfo=checker.LONDON_TZ)
+    def test_due_runs_allow_github_actions_delay_within_tolerance(self):
+        delayed_sunday_evening = datetime(2026, 5, 31, 19, 14, tzinfo=checker.LONDON_TZ)
         runs = checker.due_runs(delayed_sunday_evening)
 
         self.assertEqual(len(runs), 1)
         self.assertEqual(runs[0].swim_key, "monday")
 
-    def test_due_runs_do_not_repeat_after_thirty_minute_slot(self):
-        next_slot = datetime(2026, 5, 31, 19, 30, tzinfo=checker.LONDON_TZ)
+    def test_due_runs_do_not_repeat_outside_tolerance(self):
+        next_slot = datetime(2026, 5, 31, 19, 15, tzinfo=checker.LONDON_TZ)
         runs = checker.due_runs(next_slot)
 
         self.assertEqual(runs, [])

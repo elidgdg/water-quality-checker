@@ -139,16 +139,30 @@ class ScheduleTests(unittest.TestCase):
         self.assertEqual(runs[0].swim_key, "monday")
         self.assertEqual(runs[0].check_type, "evening")
 
-    def test_due_runs_allow_github_actions_delay_within_tolerance(self):
-        delayed_sunday_evening = datetime(2026, 5, 31, 19, 14, tzinfo=checker.LONDON_TZ)
-        runs = checker.due_runs(delayed_sunday_evening)
+    def test_due_runs_allow_late_github_actions_run_before_swim(self):
+        delayed_wednesday_evening = datetime(2026, 6, 3, 21, 40, tzinfo=checker.LONDON_TZ)
+        runs = checker.due_runs(delayed_wednesday_evening)
 
         self.assertEqual(len(runs), 1)
-        self.assertEqual(runs[0].swim_key, "monday")
+        self.assertEqual(runs[0].swim_key, "thursday")
+        self.assertEqual(runs[0].check_type, "evening")
 
-    def test_due_runs_do_not_repeat_outside_tolerance(self):
-        next_slot = datetime(2026, 5, 31, 19, 15, tzinfo=checker.LONDON_TZ)
-        runs = checker.due_runs(next_slot)
+    def test_due_runs_skip_sent_check(self):
+        delayed_wednesday_evening = datetime(2026, 6, 3, 21, 40, tzinfo=checker.LONDON_TZ)
+        sent_run = checker.due_runs(delayed_wednesday_evening)[0]
+        runs = checker.due_runs(delayed_wednesday_evening, {sent_run.id(): "2026-06-03T21:40:00+01:00"})
+
+        self.assertEqual(runs, [])
+
+    def test_due_runs_stop_when_swim_starts(self):
+        swim_started = datetime(2026, 6, 4, 8, 0, tzinfo=checker.LONDON_TZ)
+        runs = checker.due_runs(swim_started)
+
+        self.assertEqual(runs, [])
+
+    def test_due_runs_do_not_treat_old_monday_check_as_due_later_in_week(self):
+        friday = datetime(2026, 6, 5, 12, 0, tzinfo=checker.LONDON_TZ)
+        runs = checker.due_runs(friday)
 
         self.assertEqual(runs, [])
 

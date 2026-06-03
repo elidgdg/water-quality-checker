@@ -10,6 +10,7 @@ import smtplib
 import ssl
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
@@ -27,6 +28,7 @@ ARCGIS_QUERY_URL = (
     "STEServiceProduction/FeatureServer/0/query"
 )
 EDM_MAP_URL = "https://www.thameswater.co.uk/edm-map"
+DEFAULT_STATE_FILE = ".swim-check-state.json"
 LONDON_TZ = ZoneInfo("Europe/London") if ZoneInfo else timezone.utc
 
 CRITICAL_SITES = ("Witney", "Cassington")
@@ -100,7 +102,11 @@ class SwimRun:
     swim_key: str
     check_type: str
     swim_datetime: datetime
+    check_datetime: datetime
     location: str
+
+    def id(self) -> str:
+        return f"{self.swim_key}:{self.check_type}:{self.swim_datetime.date().isoformat()}"
 
 
 @dataclass(frozen=True)
@@ -261,19 +267,54 @@ def make_swim_run(swim_key: str, check_type: str, now: Optional[datetime] = None
     swim_date = (now + timedelta(days=days_until_swim)).date()
     hour, minute = (int(part) for part in config["swim_time"].split(":"))
     swim_datetime = datetime(swim_date.year, swim_date.month, swim_date.day, hour, minute, tzinfo=LONDON_TZ)
-    return SwimRun(swim_key=swim_key, check_type=check_type, swim_datetime=swim_datetime, location=config["location"])
+    check_weekday, check_time = config["checks"][check_type]
+    days_between_check_and_swim = (config["swim_day"] - check_weekday) % 7
+    check_date = swim_date - timedelta(days=days_between_check_and_swim)
+    check_hour, check_minute = (int(part) for part in check_time.split(":"))
+    check_datetime = datetime(check_date.year, check_date.month, check_date.day, check_hour, check_minute, tzinfo=LONDON_TZ)
+    return SwimRun(
+        swim_key=swim_key,
+        check_type=check_type,
+        swim_datetime=swim_datetime,
+        check_datetime=check_datetime,
+        location=config["location"],
+    )
 
 
-def due_runs(now: Optional[datetime] = None) -> List[SwimRun]:
+def load_state(path: str = DEFAULT_STATE_FILE) -> Dict[str, str]:
+    state_path = Path(path)
+    if not state_path.exists():
+        return {}
+    with state_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    sent = payload.get("sent", {})
+    if not isinstance(sent, dict):
+        return {}
+    return {str(key): str(value) for key, value in sent.items()}
+
+
+def save_state(sent: Dict[str, str], path: str = DEFAULT_STATE_FILE) -> None:
+    state_path = Path(path)
+    payload = {"sent": dict(sorted(sent.items()))}
+    state_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def prune_state(sent: Dict[str, str], now: datetime) -> Dict[str, str]:
+    cutoff = (now - timedelta(days=21)).date().isoformat()
+    return {key: value for key, value in sent.items() if key.rsplit(":", 1)[-1] >= cutoff}
+
+
+def due_runs(now: Optional[datetime] = None, sent: Optional[Dict[str, str]] = None) -> List[SwimRun]:
     now = (now or datetime.now(LONDON_TZ)).astimezone(LONDON_TZ)
+    sent = sent or {}
     runs: List[SwimRun] = []
     for swim_key, config in SCHEDULE.items():
-        for check_type, (weekday, check_time) in config["checks"].items():
-            hour, minute = (int(part) for part in check_time.split(":"))
-            scheduled_at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            in_check_window = scheduled_at - timedelta(minutes=15) <= now < scheduled_at + timedelta(minutes=15)
-            if now.weekday() == weekday and in_check_window:
-                runs.append(make_swim_run(swim_key, check_type, now))
+        for check_type in config["checks"]:
+            run = make_swim_run(swim_key, check_type, now)
+            if run.id() in sent:
+                continue
+            if run.check_datetime <= now < run.swim_datetime:
+                runs.append(run)
     return runs
 
 
@@ -371,16 +412,22 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--swim", choices=sorted(SCHEDULE), help="Swim day to check.")
     parser.add_argument("--check", choices=("evening", "morning"), help="Check type.")
     parser.add_argument("--run-due", action="store_true", help="Run checks due at the current Europe/London time.")
+    parser.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="JSON file recording sent scheduled checks.")
     parser.add_argument("--print-only", action="store_true", help="Print the email instead of sending it.")
     return parser.parse_args(argv)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
+    sent: Dict[str, str] = {}
     if args.run_due:
-        runs = due_runs()
+        now = datetime.now(LONDON_TZ)
+        sent = prune_state(load_state(args.state_file), now)
+        runs = due_runs(now, sent)
         if not runs:
-            print("No swim checks due at this time.")
+            if sent != load_state(args.state_file) and not args.print_only:
+                save_state(sent, args.state_file)
+            print("No unsent swim checks due at this time.")
             return 0
     else:
         if not args.swim or not args.check:
@@ -393,6 +440,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         decision = run_check(run, print_only=args.print_only)
         if decision.status == "MANUAL CHECK":
             exit_code = 1
+        elif args.run_due and not args.print_only:
+            sent[run.id()] = datetime.now(LONDON_TZ).isoformat(timespec="seconds")
+
+    if args.run_due and not args.print_only:
+        save_state(sent, args.state_file)
     return exit_code
 
 

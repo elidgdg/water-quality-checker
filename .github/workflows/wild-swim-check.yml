@@ -5,9 +5,15 @@ on:
     - cron: "*/15 * * * *"
   workflow_dispatch:
 
+concurrency:
+  group: wild-swim-water-quality-check
+  cancel-in-progress: false
+
 jobs:
   check:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -27,3 +33,15 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: python3 wild_swim_checker.py --run-due
 
+      - name: Commit sent-check state
+        run: |
+          if [ -z "$(git status --porcelain -- .swim-check-state.json)" ]; then
+            echo "No sent-check state changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .swim-check-state.json
+          git commit -m "Record sent swim check"
+          git pull --rebase
+          git push
